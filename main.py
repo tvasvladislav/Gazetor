@@ -1,20 +1,35 @@
 import os
+import feedparser
 import requests
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
-print("CHAT_ID =", CHAT_ID)
+feeds = [
+    "https://rsshub.app/telegram/channel/odessa_infonews",
+    "https://rsshub.app/telegram/channel/truexanewsua",
+    "https://rsshub.app/telegram/channel/slav_kram",
+    "https://rsshub.app/telegram/channel/hiaimedia",
+]
 
-url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+text = "📰 Gazetor\n\n"
 
-response = requests.post(
-    url,
+for url in feeds:
+    feed = feedparser.parse(url)
+
+    if feed.entries:
+        news = feed.entries[0]
+
+        title = news.title if hasattr(news, "title") else "Без заголовка"
+
+        text += f"• {title}\n\n"
+    else:
+        text += f"• Не удалось получить новости:\n{url}\n\n"
+
+requests.post(
+    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
     json={
         "chat_id": CHAT_ID,
-        "text": "✅ Gazetor работает!"
+        "text": text[:4000]
     }
 )
-
-print("Status:", response.status_code)
-print("Response:", response.text)
