@@ -15,17 +15,20 @@ feeds = [
 text = "📰 Gazetor\n\n"
 
 for url in feeds:
+    print("=" * 50)
+    print(url)
+
     feed = feedparser.parse(url)
 
+    print("Status:", feed.get("status"))
+    print("Entries:", len(feed.entries))
+    print("Bozo:", feed.bozo)
+
+    if feed.bozo:
+        print(feed.bozo_exception)
+
     if feed.entries:
-        news = feed.entries[0]
-
-        title = news.title if hasattr(news, "title") else "Без заголовка"
-
-        text += f"• {title}\n\n"
-    else:
-        text += f"• Не удалось получить новости:\n{url}\n\n"
-
+        print("Первая запись:", feed.entries[0].title)
 requests.post(
     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
     json={
