@@ -115,11 +115,32 @@ def summarize_with_gemini(prompt: str) -> str:
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"gemini-1.5-flash:generateContent?key={LLM_API_KEY}"
     )
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        # Новостной контент о войне/терроризме иначе часто блокируется фильтрами
+        # безопасности по умолчанию, даже при чисто нейтральной суммаризации.
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
+        ],
+    }
     resp = requests.post(url, json=payload, timeout=60)
     resp.raise_for_status()
     data = resp.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    candidates = data.get("candidates") or []
+    if not candidates:
+        feedback = data.get("promptFeedback", {})
+        raise RuntimeError(f"Gemini не вернул кандидатов. promptFeedback: {feedback}")
+
+    finish_reason = candidates[0].get("finishReason")
+    parts = candidates[0].get("content", {}).get("parts")
+    if not parts:
+        raise RuntimeError(f"Gemini вернул пустой ответ. finishReason: {finish_reason}")
+
+    return parts[0]["text"].strip()
 
 
 def send_telegram_message(text: str):
@@ -144,7 +165,10 @@ def main():
             summary = summarize_with_gemini(prompt)
         except Exception as e:
             print(f"Ошибка суммаризации: {e}")
-            summary = "Сэр, не удалось сформировать сводку через ИИ. Ниже — необработанные заголовки.\n\n" + build_prompt(all_posts)
+            summary = (
+                f"Сэр, не удалось сформировать сводку через ИИ. Причина: {e}\n\n"
+                "Ниже — необработанные заголовки.\n\n" + build_prompt(all_posts)
+            )
     else:
         summary = build_prompt(all_posts)
 
