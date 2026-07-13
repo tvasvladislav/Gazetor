@@ -1,1 +1,30 @@
+name: Gazetor Digest
 
+on:
+  schedule:
+    # Время указано в UTC. По умолчанию рассчитано на Москву (UTC+3):
+    # 11:00 МСК = 08:00 UTC, 21:00 МСК = 18:00 UTC
+    - cron: '0 8 * * *'
+    - cron: '0 18 * * *'
+  workflow_dispatch: {}  # позволяет запустить вручную из вкладки Actions
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run digest script
+        run: python fetch_and_send.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          CHANNELS: ${{ vars.CHANNELS }}
