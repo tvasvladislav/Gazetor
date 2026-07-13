@@ -11,23 +11,44 @@ CHANNELS = [c for c in os.environ.get("CHANNELS", "").split(",") if c.strip()]
 RSSHUB_BASE = os.environ.get("RSSHUB_BASE", "https://rsshub.app")
 MAX_POSTS_PER_CHANNEL = 8
 
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+}
 
-def fetch_channel_posts(channel: str):
-    """Забирает последние посты канала через RSSHub (RSS-фид Telegram-канала)."""
-    channel = channel.strip().lstrip("@")
-    if not channel:
-        return []
-    url = f"{RSSHUB_BASE}/telegram/channel/{channel}"
+
+def fetch_via_telegram_web(channel: str):
+    """Основной способ: публичная веб-версия Telegram-канала (t.me/s/канал)."""
+    url = f"https://t.me/s/{channel}"
     try:
-        resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        resp = requests.get(url, timeout=15, headers=BROWSER_HEADERS)
         resp.raise_for_status()
     except Exception as e:
-        print(f"Ошибка загрузки RSS для {channel}: {e}")
+        print(f"[t.me] Ошибка загрузки {channel}: {e}")
+        return []
+    soup = BeautifulSoup(resp.text, "html.parser")
+    posts = []
+    for msg in soup.select("div.tgme_widget_message_text"):
+        text = msg.get_text(separator=" ", strip=True)
+        if text:
+            posts.append(text)
+    return posts[-MAX_POSTS_PER_CHANNEL:]
+
+
+def fetch_via_rsshub(channel: str):
+    """Запасной способ: RSS-фид через RSSHub (может блокировать облачные IP)."""
+    url = f"{RSSHUB_BASE}/telegram/channel/{channel}"
+    try:
+        resp = requests.get(url, timeout=20, headers=BROWSER_HEADERS)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[RSSHub] Ошибка загрузки {channel}: {e}")
         return []
 
     feed = feedparser.parse(resp.content)
     if feed.bozo and not feed.entries:
-        print(f"Не удалось разобрать RSS для {channel}: {feed.bozo_exception}")
+        print(f"[RSSHub] Не удалось разобрать RSS для {channel}: {feed.bozo_exception}")
         return []
 
     posts = []
@@ -35,14 +56,22 @@ def fetch_channel_posts(channel: str):
         title = entry.get("title", "") or ""
         raw_summary = entry.get("summary", "") or entry.get("description", "") or ""
         text = BeautifulSoup(raw_summary, "html.parser").get_text(separator=" ", strip=True)
-        if title and title.strip() and title.strip() not in text:
-            combined = f"{title.strip()}. {text}"
-        else:
-            combined = text
+        combined = f"{title.strip()}. {text}" if title.strip() and title.strip() not in text else text
         combined = combined.strip()
         if combined:
             posts.append(combined)
     return posts
+
+
+def fetch_channel_posts(channel: str):
+    channel = channel.strip().lstrip("@")
+    if not channel:
+        return []
+    posts = fetch_via_telegram_web(channel)
+    if posts:
+        return posts
+    print(f"Основной способ не дал результата для {channel}, пробую RSSHub...")
+    return fetch_via_rsshub(channel)
 
 
 def collect_all_posts():
