@@ -68,10 +68,24 @@ def fetch_channel_posts(channel: str):
     if not channel:
         return []
     posts = fetch_via_telegram_web(channel)
-    if posts:
-        return posts
-    print(f"Основной способ не дал результата для {channel}, пробую RSSHub...")
-    return fetch_via_rsshub(channel)
+    if not posts:
+        print(f"Основной способ не дал результата для {channel}, пробую RSSHub...")
+        posts = fetch_via_rsshub(channel)
+    return deduplicate_posts(posts)
+
+
+def deduplicate_posts(posts):
+    """Убирает повторы: Telegram часто отдаёт один и тот же пост дважды
+    (полную версию и обрезанную с многоточием)."""
+    seen_prefixes = set()
+    result = []
+    for p in posts:
+        prefix = p[:80].strip()
+        if prefix in seen_prefixes:
+            continue
+        seen_prefixes.add(prefix)
+        result.append(p)
+    return result
 
 
 def collect_all_posts():
@@ -110,11 +124,40 @@ def build_prompt(all_posts):
     return prompt
 
 
+def discover_gemini_model() -> str:
+    """Спрашивает у Google, какие модели сейчас доступны для этого ключа,
+    и выбирает подходящую — так скрипт не ломается, когда Google
+    переименовывает или снимает с поддержки старые версии моделей."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={LLM_API_KEY}"
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    models = data.get("models", [])
+
+    usable = [
+        m["name"]  # формат: "models/gemini-2.5-flash"
+        for m in models
+        if "generateContent" in m.get("supportedGenerationMethods", [])
+    ]
+    if not usable:
+        raise RuntimeError(f"Google не вернул ни одной модели с generateContent. Ответ: {data}")
+
+    # предпочитаем быстрые модели ("flash"), избегаем экспериментальных/превью версий
+    def score(name: str):
+        n = name.lower()
+        return (
+            0 if "flash" in n else (1 if "pro" in n else 2),
+            1 if ("preview" in n or "exp" in n or "thinking" in n) else 0,
+            len(n),
+        )
+
+    usable.sort(key=score)
+    return usable[0]
+
+
 def summarize_with_gemini(prompt: str) -> str:
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-1.5-flash:generateContent?key={LLM_API_KEY}"
-    )
+    model = discover_gemini_model()  # напр. "models/gemini-2.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={LLM_API_KEY}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         # Новостной контент о войне/терроризме иначе часто блокируется фильтрами
@@ -145,35 +188,4 @@ def summarize_with_gemini(prompt: str) -> str:
 
 def send_telegram_message(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    for i in range(0, len(text), 4000):
-        chunk = text[i:i + 4000]
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": chunk})
-        if not r.ok:
-            print("Ошибка отправки в Telegram:", r.text)
-
-
-def main():
-    all_posts = collect_all_posts()
-    if not all_posts:
-        send_telegram_message("Сэр, за прошедший период новых постов не обнаружено (или источники недоступны).")
-        return
-
-    prompt = build_prompt(all_posts)
-
-    if LLM_API_KEY:
-        try:
-            summary = summarize_with_gemini(prompt)
-        except Exception as e:
-            print(f"Ошибка суммаризации: {e}")
-            summary = (
-                f"Сэр, не удалось сформировать сводку через ИИ. Причина: {e}\n\n"
-                "Ниже — необработанные заголовки.\n\n" + build_prompt(all_posts)
-            )
-    else:
-        summary = build_prompt(all_posts)
-
-    send_telegram_message(summary)
-
-
-if __name__ == "__main__":
-    main()
+    for i in range(0, len(text), 40
